@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Yan – Webapp med Turordning</title>
+  <title>Yan – Tärningsspel</title>
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <style>
     body { padding: 2rem; }
@@ -29,7 +29,15 @@
     .log { font-size: 0.9em; margin-top: 0.5rem; }
     .column-label { width: 60px; text-align: center; }
     .row-label { width: 8ch; text-align: center; }
-    .suggestion-entry { margin-bottom: 0.5rem; }
+    .suggestion-entry { margin-bottom: 0.5rem; padding: 0.25rem; border-radius: 4px; display: flex; justify-content: space-between; align-items: center; }
+    .suggestion-entry:hover {
+      background: #f8f9fa;
+      cursor: pointer;
+    }
+    .hover-target {
+      outline: 2px dashed #6c757d;
+      outline-offset: -2px;
+    }
   </style>
 </head>
 <body>
@@ -44,342 +52,241 @@
   <div id="gameArea"></div>
 </div>
 <script>
-function applySuggestion(p, suggestion) {
-  for (let c of [4,3,1,2]) {
-    const data = playerData[p];
-    if (c === 4 && data.rollCount > 1) continue; // kolumn 4 endast vid första slaget
-    const cell = document.getElementById(`p${p}_c${c}_${suggestion.row}`);
-    if (cell && !cell.value) {
-      cell.value = suggestion.value;
-      calculateSums(p);
+let currentPlayer = 0;
+let playerData = [];
+let maxRolls = 3;
+
+function setupGame() {
+  const numPlayers = parseInt(document.getElementById('numPlayers').value);
+  const gameArea = document.getElementById('gameArea');
+  gameArea.innerHTML = '';
+  playerData = [];
+
+  for (let p = 0; p < numPlayers; p++) {
+    const player = {
+      name: `Spelare ${p + 1}`,
+      rolls: 0,
+      dice: [0, 0, 0, 0, 0],
+      held: [false, false, false, false, false],
+      scores: {},
+      section: null,
+    };
+    playerData.push(player);
+
+    const section = document.createElement('div');
+    section.className = 'player-section';
+    if (p === 0) section.classList.add('active-player');
+    player.section = section;
+
+    const nameLabel = document.createElement('h4');
+    nameLabel.textContent = player.name;
+    section.appendChild(nameLabel);
+
+    const diceContainer = document.createElement('div');
+    diceContainer.className = 'dice-container';
+    for (let i = 0; i < 5; i++) {
+      const die = document.createElement('div');
+      die.className = 'die';
+      die.textContent = '-';
+      die.onclick = () => toggleHold(p, i);
+      diceContainer.appendChild(die);
+    }
+    section.appendChild(diceContainer);
+
+    const rollButton = document.createElement('button');
+    rollButton.className = 'btn btn-secondary me-2';
+    rollButton.textContent = 'Slå tärning';
+    rollButton.onclick = () => rollDice(p);
+    section.appendChild(rollButton);
+
+    const nextButton = document.createElement('button');
+    nextButton.className = 'btn btn-outline-primary';
+    nextButton.textContent = 'Nästa spelare';
+    nextButton.onclick = () => changePlayer();
+    section.appendChild(nextButton);
+
+    const suggestionBox = document.createElement('div');
+    suggestionBox.className = 'my-2';
+    suggestionBox.id = `suggestions-${p}`;
+    section.appendChild(suggestionBox);
+
+    const table = document.createElement('table');
+    table.className = 'table table-bordered text-center';
+    const thead = document.createElement('thead');
+    const headRow = document.createElement('tr');
+    ['Ruta', '↓', 'L', '↑', '1'].forEach(label => {
+      const th = document.createElement('th');
+      th.textContent = label;
+      headRow.appendChild(th);
+    });
+    thead.appendChild(headRow);
+    table.appendChild(thead);
+
+    const tbody = document.createElement('tbody');
+    const rowLabels = [
+      '1:or', '2:or', '3:or', '4:or', '5:or', '6:or',
+      'SUMMA', 'BONUS', 'MIN', 'MAX',
+      '2 PAR', 'FULL', 'STEGE', 'FYRTAL', 'YAN'
+    ];
+    rowLabels.forEach(rowLabel => {
+      const row = document.createElement('tr');
+      const tdLabel = document.createElement('td');
+      tdLabel.textContent = rowLabel;
+      row.appendChild(tdLabel);
+      for (let i = 0; i < 4; i++) {
+        const cell = document.createElement('td');
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.disabled = rowLabel === 'SUMMA' || rowLabel === 'BONUS';
+        input.dataset.row = rowLabel;
+        input.dataset.col = i + 1;
+        input.dataset.player = p;
+        input.onchange = () => lockInput(input);
+        cell.appendChild(input);
+        row.appendChild(cell);
+      }
+      tbody.appendChild(row);
+    });
+    table.appendChild(tbody);
+    section.appendChild(table);
+    gameArea.appendChild(section);
+  }
+  updateActivePlayerLabel();
+}
+
+function updateActivePlayerLabel() {
+  document.querySelectorAll('.player-section').forEach((sec, idx) => {
+    sec.classList.toggle('active-player', idx === currentPlayer);
+  });
+  document.getElementById('activePlayerLabel').innerText = `Tur: ${playerData[currentPlayer].name}`;
+}
+
+function toggleHold(playerIndex, dieIndex) {
+  const player = playerData[playerIndex];
+  if (player.rolls === 0) return;
+  player.held[dieIndex] = !player.held[dieIndex];
+  renderDice(playerIndex);
+}
+
+function rollDice(playerIndex) {
+  const player = playerData[playerIndex];
+  if (player.rolls >= maxRolls) return;
+  for (let i = 0; i < 5; i++) {
+    if (!player.held[i]) {
+      player.dice[i] = Math.floor(Math.random() * 6) + 1;
+    }
+  }
+  player.rolls++;
+  renderDice(playerIndex);
+  showSuggestions(playerIndex);
+}
+
+function renderDice(playerIndex) {
+  const player = playerData[playerIndex];
+  const diceContainer = player.section.querySelector('.dice-container');
+  [...diceContainer.children].forEach((die, i) => {
+    die.textContent = player.dice[i] || '-';
+    die.classList.toggle('selected', player.held[i]);
+  });
+}
+
+function changePlayer() {
+  const player = playerData[currentPlayer];
+  if (!Object.values(player.scores).some(v => v != null)) {
+    alert('Du måste fylla i en ruta innan du byter spelare!');
+    return;
+  }
+  player.rolls = 0;
+  player.dice = [0, 0, 0, 0, 0];
+  player.held = [false, false, false, false, false];
+  currentPlayer = (currentPlayer + 1) % playerData.length;
+  updateActivePlayerLabel();
+}
+
+function lockInput(input) {
+  input.readOnly = true;
+  if (input.value === '0') input.value = 'X';
+  const player = playerData[+input.dataset.player];
+  player.scores[`${input.dataset.row}-${input.dataset.col}`] = input.value;
+}
+
+function showSuggestions(playerIndex) {
+  const suggestions = document.getElementById(`suggestions-${playerIndex}`);
+  const dice = playerData[playerIndex].dice;
+  const counts = Array(6).fill(0);
+  dice.forEach(val => counts[val - 1]++);
+  const results = [];
+
+  for (let i = 0; i < 6; i++) {
+    if (counts[i] > 0) results.push({ label: `${i + 1}: ${counts[i]}x = ${(i + 1) * counts[i]}p`, action: () => fillCell(`${i + 1}:or`) });
+  }
+
+  if (counts.filter(c => c === 2).length >= 2) {
+    const score = dice.reduce((a, b) => a + b, 0) + 10;
+    results.push({ label: `2 PAR = ${score}p`, action: () => fillCell('2 PAR') });
+  }
+
+  if (counts.includes(3) && counts.includes(2)) {
+    const score = dice.reduce((a, b) => a + b, 0) + 20;
+    results.push({ label: `FULL = ${score}p`, action: () => fillCell('FULL') });
+  }
+
+  if ([0,1,2,3,4].every(i => counts[i] >= 1)) {
+    results.push({ label: `STEGE 1–5 = 45p`, action: () => fillCell('STEGE', 45) });
+  }
+  if ([1,2,3,4,5].every(i => counts[i] >= 1)) {
+    results.push({ label: `STEGE 2–6 = 50p`, action: () => fillCell('STEGE', 50) });
+  }
+
+  if (counts.includes(4)) {
+    const score = dice.reduce((a, b) => a + b, 0) + 40;
+    results.push({ label: `FYRTAL = ${score}p`, action: () => fillCell('FYRTAL') });
+  }
+
+  if (counts.includes(5)) {
+    const num = counts.indexOf(5) + 1;
+    const base = num * 5;
+    const bonus = num === 5 ? 70 : num === 6 ? 80 : 50;
+    const score = base + bonus;
+    results.push({ label: `YAN = ${score}p`, action: () => fillCell('YAN') });
+  }
+
+  suggestions.innerHTML = '';
+  results.forEach(r => {
+    const div = document.createElement('div');
+    div.className = 'suggestion-entry';
+    const span = document.createElement('span');
+    span.textContent = r.label;
+    const btn = document.createElement('button');
+    btn.className = 'btn btn-sm btn-success';
+    btn.textContent = 'Fyll i';
+    btn.onclick = r.action;
+    div.appendChild(span);
+    div.appendChild(btn);
+    suggestions.appendChild(div);
+  });
+}
+
+function fillCell(label, fixedValue = null) {
+  const table = playerData[currentPlayer].section.querySelector('table');
+  const inputs = table.querySelectorAll(`input[data-row="${label}"]`);
+  for (let input of inputs) {
+    if (!input.value) {
+      input.value = fixedValue ?? calculateScore(label);
+      lockInput(input);
+      showSuggestions(currentPlayer);
       return;
     }
   }
 }
-</script>
-<script>
-document.addEventListener("DOMContentLoaded", () => {
-  const observer = new MutationObserver(() => {
-    playerData.forEach((player, p) => {
-      if (player && player.rollCount > 1) {
-        rows.forEach(row => {
-          const cell = document.getElementById(`p${p}_c4_${row.key}`);
-          if (cell && !cell.readOnly) {
-            cell.readOnly = true;
-            cell.classList.add("readonly");
-          }
-        });
-      }
-    });
-  });
-  observer.observe(document.getElementById("gameArea"), { childList: true, subtree: true });
-  // 🔴 Lägg till visuell varning + kryss vid 0
-  const updateRestrictions = () => {
-    playerData.forEach((player, p) => {
-      if (!player) return;
-      rows.forEach(row => {
-        const cell = document.getElementById(`p${p}_c4_${row.key}`);
-        if (cell) {
-          // Blockera manuell inmatning efter första slaget
-          if (player.rollCount > 1 && !cell.readOnly) {
-            cell.readOnly = true;
-            cell.classList.add("readonly");
-            cell.title = "Du kan endast fylla i kolumn 1 efter första slaget.";
-          }
 
-          // Visuell varning vid försök att skriva
-          cell.addEventListener("focus", () => {
-            if (player.rollCount > 1) {
-              cell.blur();
-              cell.style.border = "2px solid red";
-              setTimeout(() => cell.style.border = "", 1000);
-            }
-          });
-
-          // Visa kryss om värde = 0
-          cell.addEventListener("input", () => {
-            if (cell.value === "0") {
-              cell.value = "✖";
-              cell.readOnly = true;
-              cell.classList.add("readonly");
-            }
-          });
-        }
-      });
-    });
-  };
-
-  observer.observe(document.getElementById("gameArea"), { childList: true, subtree: true });
-  updateRestrictions();
-
-  // 🔒 Lägg till turordningsspärr för kolumn 1 (↓) och kolumn 3 (↑)
-  playerData.forEach((player, p) => {
-    if (!player) return;
-    const col1Order = ['r1','r2','r3','r4','r5','r6','sum16','bonus','min','max','pair2','full','straight','four','yan'];
-    const col3Order = [...col1Order].reverse();
-
-    // Kolumn 1 (↓)
-    for (let i = 1; i < col1Order.length; i++) {
-      const prev = document.getElementById(`p${p}_c1_${col1Order[i - 1]}`);
-      const current = document.getElementById(`p${p}_c1_${col1Order[i]}`);
-      if (current && prev && !prev.value) {
-        current.readOnly = true;
-        current.classList.add("readonly");
-        current.title = "Föregående ruta måste fyllas i först (kolumn ↓).";
-      }
-    }
-
-    // Kolumn 3 (↑)
-    for (let i = 1; i < col3Order.length; i++) {
-      const prev = document.getElementById(`p${p}_c3_${col3Order[i - 1]}`);
-      const current = document.getElementById(`p${p}_c3_${col3Order[i]}`);
-      if (current && prev && !prev.value) {
-        current.readOnly = true;
-        current.classList.add("readonly");
-        current.title = "Föregående ruta måste fyllas i först (kolumn ↑).";
-      }
-    }
-  });
-});
-</script>
-<script>
-let currentPlayerTurn = 0;
-const maxRolls = 3;
-const playerData = [];
-
-const rows = [
-  {key:'r1', label:'1:or'}, {key:'r2', label:'2:or'}, {key:'r3', label:'3:or'},
-  {key:'r4', label:'4:or'}, {key:'r5', label:'5:or'}, {key:'r6', label:'6:or'},
-  {key:'sum16', label:'Summa', readonly:true}, {key:'bonus', label:'Bonus', readonly:true},
-  {key:'min', label:'MIN'}, {key:'max', label:'MAX'},
-  {key:'pair2', label:'2 PAR'}, {key:'full', label:'FULL'},
-  {key:'straight', label:'STEGE'}, {key:'four', label:'FYRTAL'}, {key:'yan', label:'YAN'},
-  {key:'sumcol', label:'Sum kol.', readonly:true}, {key:'total', label:'Total', readonly:true}
-];
-
-function setupGame() {
-  const num = parseInt(document.getElementById('numPlayers').value);
-  const gameArea = document.getElementById('gameArea');
-  gameArea.innerHTML = '';
-  playerData.length = 0;
-
-  for (let p = 0; p < num; p++) {
-    const section = document.createElement('div');
-    section.className = 'player-section';
-    section.id = `playerSection${p}`;
-    section.innerHTML = `
-      <h4>Spelare ${p + 1}: <input type="text" id="playerName${p}" placeholder="Namn" /></h4>
-      <div class="dice-container" id="diceContainer${p}"></div>
-      <div id="suggestions${p}" class="mb-2"></div>
-      <button class="btn btn-secondary mb-2" onclick="rollDice(${p})" id="rollBtn${p}">Slå tärning</button>
-      <button class="btn btn-outline-dark mb-2" onclick="nextPlayer()" id="nextBtn${p}" disabled>Nästa spelare</button>
-      <p>Slag kvar: <span id="rollsLeft${p}">3</span></p>
-      <div class="table-responsive">
-        <table class="table table-bordered text-center align-middle">
-          <thead>
-            <tr>
-              <th class="row-label">Ruta</th>
-              <th class="column-label">↓</th>
-              <th class="column-label">L</th>
-              <th class="column-label">↑</th>
-              <th class="column-label">1</th>
-            </tr>
-          </thead>
-          <tbody id="yanBody${p}"></tbody>
-        </table>
-      </div>
-      <div class="log" id="log${p}"><strong>Historik:</strong><ul></ul></div>
-    `;
-    gameArea.appendChild(section);
-
-    const tableBody = document.getElementById(`yanBody${p}`);
-    rows.forEach(row => {
-      const tr = document.createElement('tr');
-      tr.innerHTML = `<td>${row.label}</td>`;
-      for (let c = 1; c <= 4; c++) {
-        const id = `p${p}_c${c}_${row.key}`;
-        const input = document.createElement('input');
-        input.type = 'text';
-        input.id = id;
-        input.className = row.readonly ? 'readonly form-control' : 'form-control';
-        input.readOnly = !!row.readonly;
-        input.oninput = () => calculateSums(p);
-        const td = document.createElement('td');
-        td.appendChild(input);
-        tr.appendChild(td);
-      }
-      tableBody.appendChild(tr);
-    });
-
-    playerData.push({
-      rollCount: 0,
-      dice: [0, 0, 0, 0, 0],
-      selected: [false, false, false, false, false]
-    });
+function calculateScore(label) {
+  const dice = playerData[currentPlayer].dice;
+  if (label.match(/^\d:or$/)) {
+    const num = parseInt(label);
+    return dice.filter(d => d === num).reduce((a, b) => a + b, 0);
   }
-  updatePlayerTurn();
-}
-
-function rollDice(p) {
-  if (p !== currentPlayerTurn) return;
-  const data = playerData[p];
-  if (data.rollCount >= maxRolls) return;
-  for (let i = 0; i < 5; i++) {
-    if (!data.selected[i]) {
-      data.dice[i] = Math.floor(Math.random() * 6) + 1;
-    }
-  }
-  data.rollCount++;
-  document.getElementById(`rollsLeft${p}`).innerText = maxRolls - data.rollCount;
-  updateDiceDisplay(p);
-}
-
-function updateDiceDisplay(p) {
-  const container = document.getElementById(`diceContainer${p}`);
-  const data = playerData[p];
-  container.innerHTML = '';
-  data.dice.forEach((val, i) => {
-    const die = document.createElement('div');
-    die.className = 'die' + (data.selected[i] ? ' selected' : '');
-    die.innerText = val || '-';
-    die.onclick = () => {
-      data.selected[i] = !data.selected[i];
-      updateDiceDisplay(p);
-    };
-    container.appendChild(die);
-  });
-
-  // Visa möjliga kombinationer (mockup, bör utökas)
-  const suggestions = document.getElementById(`suggestions${p}`);
-  suggestions.innerHTML = '';
-  const dice = data.dice.filter(Boolean);
-  if (dice.length === 5) {
-    const counts = {};
-    dice.forEach(d => counts[d] = (counts[d] || 0) + 1);
-    const unique = Object.keys(counts).map(Number);
-    const values = Object.values(counts);
-    const total = dice.reduce((a, b) => a + b, 0);
-
-    // FULL
-    if (values.includes(3) && values.includes(2)) {
-      const div = document.createElement('div');
-      div.className = 'suggestion-entry';
-      div.innerHTML = `FULL (${total + 20}p) <button onclick="applySuggestion(${p}, {row: 'full', value: ${total + 20}})">Använd</button>`;
-      suggestions.appendChild(div);
-    }
-    // 2 PAR
-    if (values.filter(v => v >= 2).length >= 2) {
-      const div = document.createElement('div');
-      div.className = 'suggestion-entry';
-      div.innerHTML = `2 PAR (${total + 10}p) <button onclick="applySuggestion(${p}, {row: 'pair2', value: ${total + 10}})">Använd</button>`;
-      suggestions.appendChild(div);
-    }
-    // FYRTAL
-    if (values.includes(4)) {
-      const div = document.createElement('div');
-      div.className = 'suggestion-entry';
-      div.innerHTML = `FYRTAL (${total + 40}p) <button onclick="applySuggestion(${p}, {row: 'four', value: ${total + 40}})">Använd</button>`;
-      suggestions.appendChild(div);
-    }
-    // YAN
-    if (values.includes(5)) {
-      const face = parseInt(Object.keys(counts).find(k => counts[k] === 5));
-      let bonus = face === 6 ? 80 : face === 5 ? 70 : 50;
-      const div = document.createElement('div');
-      div.className = 'suggestion-entry';
-      div.innerHTML = `YAN (${total + bonus}p) <button onclick="applySuggestion(${p}, {row: 'yan', value: ${total + bonus}})">Använd</button>`;
-      suggestions.appendChild(div);
-    }
-    // STEGE
-    const smallStraight = [1,2,3,4,5].every(n => dice.includes(n));
-    const largeStraight = [2,3,4,5,6].every(n => dice.includes(n));
-    if (smallStraight || largeStraight) {
-      const div = document.createElement('div');
-      const base = smallStraight ? 15 : 20;
-      div.className = 'suggestion-entry';
-      div.innerHTML = `STEGE (${base + 30}p) <button onclick="applySuggestion(${p}, {row: 'straight', value: ${base + 30}})">Använd</button>`;
-      suggestions.appendChild(div);
-    }
-    // MIN/MAX
-    const minDiv = document.createElement('div');
-    minDiv.className = 'suggestion-entry';
-    minDiv.innerHTML = `MIN (${total}p) <button onclick="applySuggestion(${p}, {row: 'min', value: ${total}})">Använd</button>`;
-    suggestions.appendChild(minDiv);
-
-    const maxDiv = document.createElement('div');
-    maxDiv.className = 'suggestion-entry';
-    maxDiv.innerHTML = `MAX (${total}p) <button onclick="applySuggestion(${p}, {row: 'max', value: ${total}})">Använd</button>`;
-    suggestions.appendChild(maxDiv);
-  }
-    }
-  }
-  });
-}
-
-function nextPlayer() {
-  const p = currentPlayerTurn;
-  let hasFilled = false;
-  for (let r = 0; r < rows.length; r++) {
-    const row = rows[r];
-    for (let c = 1; c <= 4; c++) {
-      const cell = document.getElementById(`p${p}_c${c}_${row.key}`);
-      if (cell && cell.value && !isNaN(cell.value)) {
-        hasFilled = true;
-        break;
-      }
-    }
-    if (hasFilled) break;
-  }
-  if (!hasFilled) {
-    alert("Du måste fylla i ett värde i spelplanen innan du går vidare.");
-    return;
-  }
-
-  playerData[p].rollCount = 0;
-  playerData[p].dice = [0, 0, 0, 0, 0];
-  playerData[p].selected = [false, false, false, false, false];
-  updateDiceDisplay(p);
-  currentPlayerTurn = (currentPlayerTurn + 1) % playerData.length;
-  updatePlayerTurn();
-}
-
-function updatePlayerTurn() {
-  document.querySelectorAll('.player-section').forEach((el, i) => {
-    el.classList.toggle('active-player', i === currentPlayerTurn);
-    document.getElementById(`rollBtn${i}`).disabled = i !== currentPlayerTurn;
-    document.getElementById(`nextBtn${i}`).disabled = i !== currentPlayerTurn;
-  });
-  const nameInput = document.getElementById(`playerName${currentPlayerTurn}`);
-  const name = nameInput && nameInput.value ? nameInput.value : `Spelare ${currentPlayerTurn + 1}`;
-  document.getElementById('activePlayerLabel').innerText = `Tur: ${name}`;
-}
-
-function calculateSums(p) {
-  for (let c = 1; c <= 4; c++) {
-    let upperSum = 0;
-    let totalSum = 0;
-    for (let i = 1; i <= 6; i++) {
-      const cell = document.getElementById(`p${p}_c${c}_r${i}`);
-      const val = parseInt(cell?.value);
-      if (!isNaN(val)) upperSum += val;
-    }
-    const sum16 = document.getElementById(`p${p}_c${c}_sum16`);
-    const bonus = document.getElementById(`p${p}_c${c}_bonus`);
-    if (sum16) sum16.value = upperSum;
-    const bonusVal = upperSum >= 70 ? 70 : upperSum >= 60 ? 60 : 0;
-    if (bonus) bonus.value = bonusVal;
-    totalSum = upperSum + bonusVal;
-    ['min','max','pair2','full','straight','four','yan'].forEach(key => {
-      const cell = document.getElementById(`p${p}_c${c}_${key}`);
-      const val = parseInt(cell?.value);
-      if (!isNaN(val)) totalSum += val;
-    });
-    const sumcol = document.getElementById(`p${p}_c${c}_sumcol`);
-    const total = document.getElementById(`p${p}_c${c}_total`);
-    if (sumcol) sumcol.value = totalSum;
-    const multiplier = c === 1 ? 2 : c === 2 ? 1 : c === 3 ? 3 : 4;
-    if (total) total.value = totalSum * multiplier;
-  }
+  return dice.reduce((a, b) => a + b, 0); // fallback total
 }
 </script>
 </body>
