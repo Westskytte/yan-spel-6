@@ -7,7 +7,13 @@
   <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
   <style>
     body { padding: 2rem; }
-    table input { width: 4ch; padding: 0.25rem; box-sizing: border-box; text-align: center; }
+    table input {
+      width: 6ch;
+      padding: 0.25rem;
+      box-sizing: border-box;
+      text-align: center;
+      transition: background-color 0.3s ease;
+    }
     .readonly { background: #eee; }
     .dice-container { margin-bottom: 1rem; }
     .die {
@@ -21,8 +27,9 @@
     .active-player { border-color: #0d6efd; background-color: #f0f8ff; }
     .highlighted { background-color: #d4edda !important; }
     .log { font-size: 0.9em; margin-top: 0.5rem; }
-    .column-label { width: 60px; }
-    .row-label { width: 120px; }
+    .column-label { width: 60px; text-align: center; }
+    .row-label { width: 8ch; text-align: center; }
+    .suggestion-entry { margin-bottom: 0.5rem; }
   </style>
 </head>
 <body>
@@ -36,6 +43,105 @@
   <h3 id="activePlayerLabel" class="text-primary"></h3>
   <div id="gameArea"></div>
 </div>
+<script>
+function applySuggestion(p, suggestion) {
+  for (let c of [4,3,1,2]) {
+    const data = playerData[p];
+    if (c === 4 && data.rollCount > 1) continue; // kolumn 4 endast vid första slaget
+    const cell = document.getElementById(`p${p}_c${c}_${suggestion.row}`);
+    if (cell && !cell.value) {
+      cell.value = suggestion.value;
+      calculateSums(p);
+      return;
+    }
+  }
+}
+</script>
+<script>
+document.addEventListener("DOMContentLoaded", () => {
+  const observer = new MutationObserver(() => {
+    playerData.forEach((player, p) => {
+      if (player && player.rollCount > 1) {
+        rows.forEach(row => {
+          const cell = document.getElementById(`p${p}_c4_${row.key}`);
+          if (cell && !cell.readOnly) {
+            cell.readOnly = true;
+            cell.classList.add("readonly");
+          }
+        });
+      }
+    });
+  });
+  observer.observe(document.getElementById("gameArea"), { childList: true, subtree: true });
+  // 🔴 Lägg till visuell varning + kryss vid 0
+  const updateRestrictions = () => {
+    playerData.forEach((player, p) => {
+      if (!player) return;
+      rows.forEach(row => {
+        const cell = document.getElementById(`p${p}_c4_${row.key}`);
+        if (cell) {
+          // Blockera manuell inmatning efter första slaget
+          if (player.rollCount > 1 && !cell.readOnly) {
+            cell.readOnly = true;
+            cell.classList.add("readonly");
+            cell.title = "Du kan endast fylla i kolumn 1 efter första slaget.";
+          }
+
+          // Visuell varning vid försök att skriva
+          cell.addEventListener("focus", () => {
+            if (player.rollCount > 1) {
+              cell.blur();
+              cell.style.border = "2px solid red";
+              setTimeout(() => cell.style.border = "", 1000);
+            }
+          });
+
+          // Visa kryss om värde = 0
+          cell.addEventListener("input", () => {
+            if (cell.value === "0") {
+              cell.value = "✖";
+              cell.readOnly = true;
+              cell.classList.add("readonly");
+            }
+          });
+        }
+      });
+    });
+  };
+
+  observer.observe(document.getElementById("gameArea"), { childList: true, subtree: true });
+  updateRestrictions();
+
+  // 🔒 Lägg till turordningsspärr för kolumn 1 (↓) och kolumn 3 (↑)
+  playerData.forEach((player, p) => {
+    if (!player) return;
+    const col1Order = ['r1','r2','r3','r4','r5','r6','sum16','bonus','min','max','pair2','full','straight','four','yan'];
+    const col3Order = [...col1Order].reverse();
+
+    // Kolumn 1 (↓)
+    for (let i = 1; i < col1Order.length; i++) {
+      const prev = document.getElementById(`p${p}_c1_${col1Order[i - 1]}`);
+      const current = document.getElementById(`p${p}_c1_${col1Order[i]}`);
+      if (current && prev && !prev.value) {
+        current.readOnly = true;
+        current.classList.add("readonly");
+        current.title = "Föregående ruta måste fyllas i först (kolumn ↓).";
+      }
+    }
+
+    // Kolumn 3 (↑)
+    for (let i = 1; i < col3Order.length; i++) {
+      const prev = document.getElementById(`p${p}_c3_${col3Order[i - 1]}`);
+      const current = document.getElementById(`p${p}_c3_${col3Order[i]}`);
+      if (current && prev && !prev.value) {
+        current.readOnly = true;
+        current.classList.add("readonly");
+        current.title = "Föregående ruta måste fyllas i först (kolumn ↑).";
+      }
+    }
+  });
+});
+</script>
 <script>
 let currentPlayerTurn = 0;
 const maxRolls = 3;
@@ -93,7 +199,7 @@ function setupGame() {
       for (let c = 1; c <= 4; c++) {
         const id = `p${p}_c${c}_${row.key}`;
         const input = document.createElement('input');
-        input.type = 'number';
+        input.type = 'text';
         input.id = id;
         input.className = row.readonly ? 'readonly form-control' : 'form-control';
         input.readOnly = !!row.readonly;
@@ -114,129 +220,81 @@ function setupGame() {
   updatePlayerTurn();
 }
 
-function calculateSums(p) {
-  let grandTotal = 0;
-  let filled = true;
+function rollDice(p) {
+  if (p !== currentPlayerTurn) return;
+  const data = playerData[p];
+  if (data.rollCount >= maxRolls) return;
+  for (let i = 0; i < 5; i++) {
+    if (!data.selected[i]) {
+      data.dice[i] = Math.floor(Math.random() * 6) + 1;
+    }
+  }
+  data.rollCount++;
+  document.getElementById(`rollsLeft${p}`).innerText = maxRolls - data.rollCount;
+  updateDiceDisplay(p);
+}
 
+function updateDiceDisplay(p) {
+  const container = document.getElementById(`diceContainer${p}`);
+  const data = playerData[p];
+  container.innerHTML = '';
+  data.dice.forEach((val, i) => {
+    const die = document.createElement('div');
+    die.className = 'die' + (data.selected[i] ? ' selected' : '');
+    die.innerText = val || '-';
+    die.onclick = () => {
+      data.selected[i] = !data.selected[i];
+      updateDiceDisplay(p);
+    };
+    container.appendChild(die);
+  });
+}
+
+function nextPlayer() {
+  playerData[currentPlayerTurn].rollCount = 0;
+  playerData[currentPlayerTurn].dice = [0, 0, 0, 0, 0];
+  playerData[currentPlayerTurn].selected = [false, false, false, false, false];
+  updateDiceDisplay(currentPlayerTurn);
+  currentPlayerTurn = (currentPlayerTurn + 1) % playerData.length;
+  updatePlayerTurn();
+}
+
+function updatePlayerTurn() {
+  document.querySelectorAll('.player-section').forEach((el, i) => {
+    el.classList.toggle('active-player', i === currentPlayerTurn);
+    document.getElementById(`rollBtn${i}`).disabled = i !== currentPlayerTurn;
+    document.getElementById(`nextBtn${i}`).disabled = i !== currentPlayerTurn;
+  });
+  const nameInput = document.getElementById(`playerName${currentPlayerTurn}`);
+  const name = nameInput && nameInput.value ? nameInput.value : `Spelare ${currentPlayerTurn + 1}`;
+  document.getElementById('activePlayerLabel').innerText = `Tur: ${name}`;
+}
+
+function calculateSums(p) {
   for (let c = 1; c <= 4; c++) {
     let upperSum = 0;
     let totalSum = 0;
-
     for (let i = 1; i <= 6; i++) {
-      const val = parseInt(document.getElementById(`p${p}_c${c}_r${i}`).value) || 0;
-      upperSum += val;
-      totalSum += val;
+      const cell = document.getElementById(`p${p}_c${c}_r${i}`);
+      const val = parseInt(cell?.value);
+      if (!isNaN(val)) upperSum += val;
     }
-
-    document.getElementById(`p${p}_c${c}_sum16`).value = upperSum;
-    const bonus = upperSum >= 70 ? 70 : upperSum >= 60 ? 60 : 0;
-    document.getElementById(`p${p}_c${c}_bonus`).value = bonus;
-    totalSum += bonus;
-
+    const sum16 = document.getElementById(`p${p}_c${c}_sum16`);
+    const bonus = document.getElementById(`p${p}_c${c}_bonus`);
+    if (sum16) sum16.value = upperSum;
+    const bonusVal = upperSum >= 70 ? 70 : upperSum >= 60 ? 60 : 0;
+    if (bonus) bonus.value = bonusVal;
+    totalSum = upperSum + bonusVal;
     ['min','max','pair2','full','straight','four','yan'].forEach(key => {
-      const val = parseInt(document.getElementById(`p${p}_c${c}_${key}`).value);
+      const cell = document.getElementById(`p${p}_c${c}_${key}`);
+      const val = parseInt(cell?.value);
       if (!isNaN(val)) totalSum += val;
-      else filled = false;
     });
-
-    document.getElementById(`p${p}_c${c}_sumcol`).value = totalSum;
-
+    const sumcol = document.getElementById(`p${p}_c${c}_sumcol`);
+    const total = document.getElementById(`p${p}_c${c}_total`);
+    if (sumcol) sumcol.value = totalSum;
     const multiplier = c === 1 ? 2 : c === 2 ? 1 : c === 3 ? 3 : 4;
-    const colTotal = totalSum * multiplier;
-    document.getElementById(`p${p}_c${c}_total`).value = colTotal;
-    grandTotal += colTotal;
-  }
-
-  const output = document.getElementById(`playerSection${p}`);
-  const totalDisplayId = `totalDisplay${p}`;
-  let display = document.getElementById(totalDisplayId);
-  if (!display) {
-    display = document.createElement('div');
-    display.id = totalDisplayId;
-    display.className = 'mt-2 fw-bold';
-    output.appendChild(display);
-  }
-  display.innerText = filled ? `🏁 Slutpoäng: ${grandTotal} poäng` : '';
-
-  showWinner();
-}
-
-function showWinner() {
-  const totals = [];
-  const names = [];
-  let allDone = true;
-
-  for (let p = 0; p < playerData.length; p++) {
-    let filled = true;
-    let total = 0;
-    for (let c = 1; c <= 4; c++) {
-      const val = parseInt(document.getElementById(`p${p
-      if (!isNaN(val)) total += val;
-      else filled = false;
-    }
-    if (!filled) allDone = false;
-    totals.push(total);
-    names.push(document.getElementById(`playerName${p}`).value || `Spelare ${p+1}`);
-  }
-
-  const existing = document.getElementById('winnerAnnounce');
-  if (existing) existing.remove();
-
-  if (!allDone) return;
-
-  let highest = Math.max(...totals);
-  let winnerIndex = totals.indexOf(highest);
-  let winnerName = names[winnerIndex];
-
-  const result = document.createElement('div');
-  result.className = 'alert alert-success mt-4';
-  result.id = 'winnerAnnounce';
-  result.innerText = `🏆 ${winnerName} vinner med ${highest} poäng!`;
-  document.querySelector('.container').appendChild(result);
-}_c${c}_total`).value);
-      if (!isNaN(val)) total += val;
-      else filled = false;
-    }
-    if (!filled) allDone = false;
-    totals.push(total);
-    names.push(document.getElementById(`playerName${p}`).value || `Spelare ${p+1}`);
-  }
-
-  const existing = document.getElementById('winnerAnnounce');
-  if (existing) existing.remove();
-
-  if (!allDone) return;
-
-  let highest = Math.max(...totals);
-  let winnerIndex = totals.indexOf(highest);
-  let winnerName = names[winnerIndex];
-
-  const result = document.createElement('div');
-  result.className = 'alert alert-success mt-4';
-  result.id = 'winnerAnnounce';
-  result.innerText = `🏆 ${winnerName} vinner med ${highest} poäng!`;
-  document.querySelector('.container').appendChild(result);
-}_c${c}_total`).value);
-      if (!isNaN(val)) total += val;
-      else filled = false;
-    }
-    if (!filled) allDone = false;
-    totals.push(total);
-    names.push(document.getElementById(`playerName${p}`).value || `Spelare ${p+1}`);
-  }
-
-  if (!allDone) return;
-
-  let highest = Math.max(...totals);
-  let winnerIndex = totals.indexOf(highest);
-  let winnerName = names[winnerIndex];
-
-  if (!document.getElementById('winnerAnnounce')) {
-    const result = document.createElement('div');
-    result.className = 'alert alert-success mt-4';
-    result.id = 'winnerAnnounce';
-    result.innerText = `🏆 ${winnerName} vinner med ${highest} poäng!`;
-    document.querySelector('.container').appendChild(result);
+    if (total) total.value = totalSum * multiplier;
   }
 }
 </script>
