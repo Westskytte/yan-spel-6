@@ -248,13 +248,97 @@ function updateDiceDisplay(p) {
     };
     container.appendChild(die);
   });
+
+  // Visa möjliga kombinationer (mockup, bör utökas)
+  const suggestions = document.getElementById(`suggestions${p}`);
+  suggestions.innerHTML = '';
+  const dice = data.dice.filter(Boolean);
+  if (dice.length === 5) {
+    const counts = {};
+    dice.forEach(d => counts[d] = (counts[d] || 0) + 1);
+    const unique = Object.keys(counts).map(Number);
+    const values = Object.values(counts);
+    const total = dice.reduce((a, b) => a + b, 0);
+
+    // FULL
+    if (values.includes(3) && values.includes(2)) {
+      const div = document.createElement('div');
+      div.className = 'suggestion-entry';
+      div.innerHTML = `FULL (${total + 20}p) <button onclick="applySuggestion(${p}, {row: 'full', value: ${total + 20}})">Använd</button>`;
+      suggestions.appendChild(div);
+    }
+    // 2 PAR
+    if (values.filter(v => v >= 2).length >= 2) {
+      const div = document.createElement('div');
+      div.className = 'suggestion-entry';
+      div.innerHTML = `2 PAR (${total + 10}p) <button onclick="applySuggestion(${p}, {row: 'pair2', value: ${total + 10}})">Använd</button>`;
+      suggestions.appendChild(div);
+    }
+    // FYRTAL
+    if (values.includes(4)) {
+      const div = document.createElement('div');
+      div.className = 'suggestion-entry';
+      div.innerHTML = `FYRTAL (${total + 40}p) <button onclick="applySuggestion(${p}, {row: 'four', value: ${total + 40}})">Använd</button>`;
+      suggestions.appendChild(div);
+    }
+    // YAN
+    if (values.includes(5)) {
+      const face = parseInt(Object.keys(counts).find(k => counts[k] === 5));
+      let bonus = face === 6 ? 80 : face === 5 ? 70 : 50;
+      const div = document.createElement('div');
+      div.className = 'suggestion-entry';
+      div.innerHTML = `YAN (${total + bonus}p) <button onclick="applySuggestion(${p}, {row: 'yan', value: ${total + bonus}})">Använd</button>`;
+      suggestions.appendChild(div);
+    }
+    // STEGE
+    const smallStraight = [1,2,3,4,5].every(n => dice.includes(n));
+    const largeStraight = [2,3,4,5,6].every(n => dice.includes(n));
+    if (smallStraight || largeStraight) {
+      const div = document.createElement('div');
+      const base = smallStraight ? 15 : 20;
+      div.className = 'suggestion-entry';
+      div.innerHTML = `STEGE (${base + 30}p) <button onclick="applySuggestion(${p}, {row: 'straight', value: ${base + 30}})">Använd</button>`;
+      suggestions.appendChild(div);
+    }
+    // MIN/MAX
+    const minDiv = document.createElement('div');
+    minDiv.className = 'suggestion-entry';
+    minDiv.innerHTML = `MIN (${total}p) <button onclick="applySuggestion(${p}, {row: 'min', value: ${total}})">Använd</button>`;
+    suggestions.appendChild(minDiv);
+
+    const maxDiv = document.createElement('div');
+    maxDiv.className = 'suggestion-entry';
+    maxDiv.innerHTML = `MAX (${total}p) <button onclick="applySuggestion(${p}, {row: 'max', value: ${total}})">Använd</button>`;
+    suggestions.appendChild(maxDiv);
+  }
+    }
+  }
+  });
 }
 
 function nextPlayer() {
-  playerData[currentPlayerTurn].rollCount = 0;
-  playerData[currentPlayerTurn].dice = [0, 0, 0, 0, 0];
-  playerData[currentPlayerTurn].selected = [false, false, false, false, false];
-  updateDiceDisplay(currentPlayerTurn);
+  const p = currentPlayerTurn;
+  let hasFilled = false;
+  for (let r = 0; r < rows.length; r++) {
+    const row = rows[r];
+    for (let c = 1; c <= 4; c++) {
+      const cell = document.getElementById(`p${p}_c${c}_${row.key}`);
+      if (cell && cell.value && !isNaN(cell.value)) {
+        hasFilled = true;
+        break;
+      }
+    }
+    if (hasFilled) break;
+  }
+  if (!hasFilled) {
+    alert("Du måste fylla i ett värde i spelplanen innan du går vidare.");
+    return;
+  }
+
+  playerData[p].rollCount = 0;
+  playerData[p].dice = [0, 0, 0, 0, 0];
+  playerData[p].selected = [false, false, false, false, false];
+  updateDiceDisplay(p);
   currentPlayerTurn = (currentPlayerTurn + 1) % playerData.length;
   updatePlayerTurn();
 }
